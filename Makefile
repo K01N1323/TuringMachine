@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 
-SRCS = main.cpp
+SRCS = main.cpp MemoryManager.cpp
 OBJS = $(SRCS:.cpp=.o)
 TARGET = turing_machine
 
@@ -13,7 +13,8 @@ $(TARGET): $(OBJS)
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-main.o: main.cpp MacrosForTuring.h TuringMachine.h
+main.o: main.cpp MacrosForTuring.h TuringMachine.h MemoryManager.h
+MemoryManager.o: MemoryManager.cpp MemoryManager.h TuringMachine.h
 
 clean:
 	rm -f $(OBJS) $(TARGET)

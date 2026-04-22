@@ -49,6 +49,9 @@ public:
   // Записать начальные данные на ленту
   void SetTapeContent(int position, char symbol) { tape[position] = symbol; }
 
+  // Предоставляет доступ к памяти только для чтения (для MemoryManager)
+  const std::map<int, char> &GetTape() const { return tape; }
+
   // Один такт работы машины
   bool Step() {
     if (currentState == "halt") {
