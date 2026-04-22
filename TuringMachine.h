@@ -1,110 +1,98 @@
-#include "MacrosForTuring.h"
-#include "MemoryManager.h"
-#include "TuringMachine.h"
+#ifndef TURING_MACHINE_H
+#define TURING_MACHINE_H
 #include <iostream>
+#include <map>
+#include <string>
 
-// =========================================================
-// ТЕСТ 1: Сложение (X = X + Y)
-// Ожидаем: 3 + 4 = 7
-// =========================================================
-void TestAddition() {
-  std::cout << "--- [TEST 1] Addition (3 + 4) ---\n";
-  TuringMachine tm("start");
-  MemoryManager mem;
+enum class Direction { Left = -1, Stay = 0, Right = 1 };
 
-  mem.Allocate("x", 3);
-  mem.Allocate("y", 4);
-  mem.Deploy(tm);
+// Структура, описывающая реакцию машины (что делать дальше)
+struct Action {
+  std::string nextState;
+  char writeSymbol;
+  Direction move;
+};
 
-  GenerateAdd(tm, "start", mem.GetAddress("x"), mem.GetAddress("y"), "halt");
-  tm.Run();
+class TuringMachine {
+private:
+  // временная лента. Потом тип LazySequence<char>
+  std::map<int, char> tape;
 
-  int result = mem.GetDecimalValue(tm, "x");
-  std::cout << "x (Expected 7) = " << result
-            << (result == 7 ? " [PASSED]" : " [FAILED]") << "\n";
-  std::cout << "y (Expected 4) = " << mem.GetDecimalValue(tm, "y") << "\n\n";
-}
+  int head;                 // Текущая позиция каретки
+  std::string currentState; // Текущее состояние машины
 
-// =========================================================
-// ТЕСТ 2: Усеченное вычитание (X = X - Y)
-// Ожидаем: 5 - 2 = 3
-// =========================================================
-void TestSubtraction() {
-  std::cout << "--- [TEST 2] Subtraction (5 - 2) ---\n";
-  TuringMachine tm("start");
-  MemoryManager mem;
+  // Ключ: пара <Текущее состояние, Читаемый символ>
+  std::map<std::pair<std::string, char>, Action> rules;
 
-  mem.Allocate("x", 5);
-  mem.Allocate("y", 2);
-  mem.Deploy(tm);
+  // Чтение символа с ленты (если ячейка пуста, возвращаем пробел/пустышку '_')
+  char ReadTape() {
+    if (tape.find(head) == tape.end()) {
+      return '_';
+    }
+    return tape[head];
+  }
 
-  GenerateSubtract(tm, "start", mem.GetAddress("x"), mem.GetAddress("y"),
-                   "halt");
-  tm.Run();
+public:
+  // Конструктор
+  TuringMachine(const std::string &startState = "q0") {
+    head = 0;
+    currentState = startState;
+  }
 
-  int result = mem.GetDecimalValue(tm, "x");
-  std::cout << "x (Expected 3) = " << result
-            << (result == 3 ? " [PASSED]" : " [FAILED]") << "\n";
-  std::cout << "y (Expected 2) = " << mem.GetDecimalValue(tm, "y") << "\n\n";
-}
+  // Метод для добавления правила (его потом будет массово вызывать наш
+  // компилятор)
+  void AddRule(const std::string &state, char readSym,
+               const std::string &nextState, char writeSym, Direction dir) {
+    rules[{state, readSym}] = {nextState, writeSym, dir};
+  }
 
-// =========================================================
-// ТЕСТ 3: Умножение (Result = X * Y)
-// Ожидаем: 4 * 5 = 20
-// =========================================================
-void TestMultiplication() {
-  std::cout << "--- [TEST 3] Multiplication (4 * 5) ---\n";
-  TuringMachine tm("start");
-  MemoryManager mem;
+  // Записать начальные данные на ленту
+  void SetTapeContent(int position, char symbol) { tape[position] = symbol; }
 
-  mem.Allocate("result", 0);
-  mem.Allocate("x", 4);
-  mem.Allocate("y", 5);
-  mem.Deploy(tm);
+  // Предоставляет доступ к памяти только для чтения (для MemoryManager)
+  const std::map<int, char> &GetTape() const { return tape; }
 
-  // Передаем адреса: куда писать (result), что прибавлять (x), сколько раз (y)
-  GenerateMultiply(tm, "start", mem.GetAddress("result"), mem.GetAddress("x"),
-                   mem.GetAddress("y"), "halt");
-  tm.Run();
+  // Один такт работы машины
+  bool Step() {
+    if (currentState == "halt") {
+      return false;
+    }
 
-  int result = mem.GetDecimalValue(tm, "result");
-  std::cout << "result (Expected 20) = " << result
-            << (result == 20 ? " [PASSED]" : " [FAILED]") << "\n\n";
-}
+    char currentSymbol = ReadTape();
+    auto key = std::make_pair(currentState, currentSymbol);
 
-// =========================================================
-// ТЕСТ 4: Копирование / Присваивание (X = Y)
-// Ожидаем: X станет равно 9, Y останется 9
-// =========================================================
-void TestAssign() {
-  std::cout << "--- [TEST 4] Assignment (X = Y) ---\n";
-  TuringMachine tm("start");
-  MemoryManager mem;
+    auto it = rules.find(key);
+    if (it == rules.end()) {
+      // НЕЯВНАЯ ПРОВЕРКА: Спасает от зависания, если компилятор забыл дописать
+      // правила
+      std::cerr << "Ошибка исполнения МТ: Нет правила для состояния '"
+                << currentState << "' и символа '" << currentSymbol << "'\n";
+      return false;
+    }
 
-  mem.Allocate("x", 2); // Изначально тут мусор
-  mem.Allocate("y", 9);
-  mem.Deploy(tm);
+    Action action = it->second;
+    tape[head] = action.writeSymbol;
+    head += static_cast<int>(action.move);
+    currentState = action.nextState;
 
-  GenerateAssign(tm, "start", mem.GetAddress("x"), mem.GetAddress("y"), "halt");
-  tm.Run();
+    return true;
+  }
 
-  int resultX = mem.GetDecimalValue(tm, "x");
-  int resultY = mem.GetDecimalValue(tm, "y");
-  std::cout << "x (Expected 9) = " << resultX
-            << (resultX == 9 ? " [PASSED]" : " [FAILED]") << "\n";
-  std::cout << "y (Expected 9) = " << resultY << "\n\n";
-}
+  // Запуск машины до остановки
+  void Run() {
+    while (Step()) {
+      // Цикл крутится, пока Step() возвращает true
+    }
+  }
 
-int main() {
-  std::cout << "Starting Turing Machine Hardware "
-               "Tests...\n=========================================\n\n";
-
-  TestAddition();
-  TestSubtraction();
-  TestMultiplication();
-  TestAssign();
-
-  std::cout
-      << "=========================================\nAll tests completed.\n";
-  return 0;
-}
+  // Временный метод для вывода ленты (пока нет графики)
+  void PrintTape() {
+    std::cout << "Состояние: " << currentState << " | Каретка на: " << head
+              << "\nЛента: ";
+    for (auto const &[pos, symbol] : tape) {
+      std::cout << "[" << pos << "]=" << symbol << " ";
+    }
+    std::cout << "\n\n";
+  }
+};
+#endif // TURING_MACHINE_H
