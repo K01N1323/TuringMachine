@@ -4,9 +4,9 @@
 #include "TuringMachine.h"
 #include <string>
 
-// Единый алфавит символов, которые каретка должна уметь игнорировать при
-// перемещении. m - для сравнения, c - для сложения.
-const std::string ALPHABET = "01_:#abcdefghijklmnopqrstuvwxyzcm";
+// Единый алфавит. * - флаг для сложения, @ - флаг для
+// умножения/сравнения/вычитания
+const std::string ALPHABET = "01_:#abcdefghijklmnopqrstuvwxyz*@";
 
 // Базовый макрос: Идет ВПРАВО, пропуская все символы, пока не встретит target
 void GenerateMoveRightUntil(TuringMachine &tm, const std::string &startState,
@@ -96,11 +96,11 @@ void GenerateCompare(TuringMachine &tm, const std::string &startState,
   // 2. Ищем '1' в X
   tm.AddRule(sFindX, xName, sFindX, xName, Direction::Right);
   tm.AddRule(sFindX, ':', sFindX, ':', Direction::Right);
-  tm.AddRule(sFindX, 'm', sFindX, 'm',
+  tm.AddRule(sFindX, '@', sFindX, '@',
              Direction::Right); // Пропускаем уже помеченные
 
-  tm.AddRule(sFindX, '1', sGoY, 'm',
-             Direction::Right); // Нашли '1' -> 'm', идем к Y
+  tm.AddRule(sFindX, '1', sGoY, '@',
+             Direction::Right); // Нашли '1' -> '@', идем к Y
   tm.AddRule(sFindX, '#', sCheckYEmpty, '#',
              Direction::Right); // X пуст, идем проверять Y
 
@@ -110,10 +110,10 @@ void GenerateCompare(TuringMachine &tm, const std::string &startState,
   // 4. Ищем '1' в Y
   tm.AddRule(sCheckY, yName, sCheckY, yName, Direction::Right);
   tm.AddRule(sCheckY, ':', sCheckY, ':', Direction::Right);
-  tm.AddRule(sCheckY, 'm', sCheckY, 'm', Direction::Right);
+  tm.AddRule(sCheckY, '@', sCheckY, '@', Direction::Right);
 
-  tm.AddRule(sCheckY, '1', sBackX, 'm',
-             Direction::Left); // Нашли пару -> 'm', возврат к X
+  tm.AddRule(sCheckY, '1', sBackX, '@',
+             Direction::Left); // Нашли пару -> '@', возврат к X
   tm.AddRule(sCheckY, '#', prefix + "cleanup_G", '#',
              Direction::Left); // В Y пусто, а в X только что была '1'. X > Y.
 
@@ -127,23 +127,23 @@ void GenerateCompare(TuringMachine &tm, const std::string &startState,
 
   tm.AddRule(sYFind, yName, sYFind, yName, Direction::Right);
   tm.AddRule(sYFind, ':', sYFind, ':', Direction::Right);
-  tm.AddRule(sYFind, 'm', sYFind, 'm', Direction::Right);
+  tm.AddRule(sYFind, '@', sYFind, '@', Direction::Right);
 
   tm.AddRule(sYFind, '1', prefix + "cleanup_L", '1',
              Direction::Left); // В Y есть остаток. X < Y
   tm.AddRule(sYFind, '#', prefix + "cleanup_E", '#',
              Direction::Left); // В Y тоже пусто. X = Y
 
-  // 7. Очистка (восстанавливаем 'm' -> '1' и возвращаемся в начало)
+  // 7. Очистка (восстанавливаем '@' -> '1' и возвращаемся в начало)
   for (std::string res : {"_G", "_L", "_E"}) {
     std::string state = prefix + "cleanup" + res;
     std::string finalState =
         (res == "_G" ? stateGreater : (res == "_L" ? stateLess : stateEqual));
 
-    // Превращаем 'm' обратно в '1' на ходу
-    tm.AddRule(state, 'm', state, '1', Direction::Left);
+    // Превращаем '@' обратно в '1' на ходу
+    tm.AddRule(state, '@', state, '1', Direction::Left);
     for (char s : ALPHABET) {
-      if (s != 'm' && s != '_') {
+      if (s != '@' && s != '_') {
         tm.AddRule(state, s, state, s, Direction::Left);
       }
     }
@@ -174,11 +174,11 @@ void GenerateAdd(TuringMachine &tm, const std::string &startState, char xName,
   GenerateMoveRightUntil(tm, sStartLoop, yName, sCheckY);
   tm.AddRule(sCheckY, yName, sCheckY, yName, Direction::Right);
   tm.AddRule(sCheckY, ':', sCheckY, ':', Direction::Right);
-  tm.AddRule(sCheckY, 'c', sCheckY, 'c',
+  tm.AddRule(sCheckY, '*', sCheckY, '*',
              Direction::Right); // Пропускаем уже скопированные
 
-  // 3. Берем одну '1' из Y и помечаем её как 'c'
-  tm.AddRule(sCheckY, '1', sGoStartX, 'c', Direction::Stay);
+  // 3. Берем одну '1' из Y и помечаем её как '*'
+  tm.AddRule(sCheckY, '1', sGoStartX, '*', Direction::Stay);
 
   // Если уперлись в '#', значит Y закончился — идем в блок восстановления
   tm.AddRule(sCheckY, '#', sRestore, '#', Direction::Stay);
@@ -203,7 +203,7 @@ void GenerateAdd(TuringMachine &tm, const std::string &startState, char xName,
   // 7. Возврат в начало и повтор челночного бега
   GenerateReturnToStart(tm, prefix + "loop_back", sStartLoop);
 
-  // 8. Восстановление Y (чистим 'c' обратно в '1')
+  // 8. Восстановление Y (чистим '*' обратно в '1')
   GenerateReturnToStart(tm, sRestore, prefix + "clean_y");
   GenerateMoveRightUntil(tm, prefix + "clean_y", yName, prefix + "cleaning");
 
@@ -213,7 +213,7 @@ void GenerateAdd(TuringMachine &tm, const std::string &startState, char xName,
              Direction::Right);
   tm.AddRule(prefix + "cleaning", '1', prefix + "cleaning", '1',
              Direction::Right);
-  tm.AddRule(prefix + "cleaning", 'c', prefix + "cleaning", '1',
+  tm.AddRule(prefix + "cleaning", '*', prefix + "cleaning", '1',
              Direction::Right);
   tm.AddRule(prefix + "cleaning", '#', prefix + "finish", '#', Direction::Stay);
 
@@ -307,11 +307,11 @@ void GenerateSubtract(TuringMachine &tm, const std::string &startState,
   GenerateMoveRightUntil(tm, startState, yName, sCheckY);
   tm.AddRule(sCheckY, yName, sCheckY, yName, Direction::Right);
   tm.AddRule(sCheckY, ':', sCheckY, ':', Direction::Right);
-  tm.AddRule(sCheckY, 'm', sCheckY, 'm',
+  tm.AddRule(sCheckY, '@', sCheckY, '@',
              Direction::Right); // Пропускаем отмеченные
 
-  // 2. Берем одну '1' из Y (помечаем как 'm')
-  tm.AddRule(sCheckY, '1', sGoStartX, 'm', Direction::Stay);
+  // 2. Берем одну '1' из Y (помечаем как '@')
+  tm.AddRule(sCheckY, '1', sGoStartX, '@', Direction::Stay);
 
   // Если в Y пусто (уперлись в '#'), идем в блок восстановления
   tm.AddRule(sCheckY, '#', sRestore, '#', Direction::Stay);
@@ -328,7 +328,7 @@ void GenerateSubtract(TuringMachine &tm, const std::string &startState,
   // 5. Возвращаемся в начало и повторяем цикл
   GenerateReturnToStart(tm, sLoopBack, startState);
 
-  // 6. Очистка Y (восстанавливаем 'm' обратно в '1')
+  // 6. Очистка Y (восстанавливаем '@' обратно в '1')
   GenerateReturnToStart(tm, sRestore, prefix + "clean_y");
   GenerateMoveRightUntil(tm, prefix + "clean_y", yName, prefix + "cleaning");
 
@@ -338,7 +338,7 @@ void GenerateSubtract(TuringMachine &tm, const std::string &startState,
              Direction::Right);
   tm.AddRule(prefix + "cleaning", '1', prefix + "cleaning", '1',
              Direction::Right);
-  tm.AddRule(prefix + "cleaning", 'm', prefix + "cleaning", '1',
+  tm.AddRule(prefix + "cleaning", '@', prefix + "cleaning", '1',
              Direction::Right);
 
   tm.AddRule(prefix + "cleaning", '#', prefix + "finish", '#', Direction::Stay);
@@ -367,25 +367,21 @@ void GenerateMultiply(TuringMachine &tm, const std::string &startState,
   // 2. Ищем свободную '1' в Z
   tm.AddRule(sCheckZ, zName, sCheckZ, zName, Direction::Right);
   tm.AddRule(sCheckZ, ':', sCheckZ, ':', Direction::Right);
-  tm.AddRule(
-      sCheckZ, 'm', sCheckZ, 'm',
-      Direction::Right); // 'm' - пометка, что эту единицу мы уже обработали
+  tm.AddRule(sCheckZ, '@', sCheckZ, '@',
+             Direction::Right); // Пропускаем обработанные
 
-  // 3. Берем '1' из Z (заменяем на 'm') и переходим к фазе сложения
-  tm.AddRule(sCheckZ, '1', sDoAdd, 'm', Direction::Stay);
+  // 3. Берем '1' из Z (заменяем на '@') и переходим к фазе сложения
+  tm.AddRule(sCheckZ, '1', sDoAdd, '@', Direction::Stay);
 
   // Если Z кончился (уперлись в '#'), идем восстанавливать Z
   tm.AddRule(sCheckZ, '#', sRestoreZ, '#', Direction::Stay);
 
   // ========================================================================
   // 4. МАГИЯ КОМПОЗИЦИИ: Вызываем макрос сложения!
-  // Он возьмет состояние sDoAdd, честно прибавит Y к X,
-  // и когда закончит — вернет управление нашему циклу (в состояние sLoopZ).
-  // Мы буквально вшили один конечный автомат внутрь другого.
   // ========================================================================
   GenerateAdd(tm, sDoAdd, xName, yName, sLoopZ);
 
-  // 5. Очистка Z (восстанавливаем 'm' обратно в '1')
+  // 5. Очистка Z (восстанавливаем '@' обратно в '1')
   GenerateReturnToStart(tm, sRestoreZ, prefix + "clean_z");
   GenerateMoveRightUntil(tm, prefix + "clean_z", zName, prefix + "cleaning");
 
@@ -395,7 +391,7 @@ void GenerateMultiply(TuringMachine &tm, const std::string &startState,
              Direction::Right);
   tm.AddRule(prefix + "cleaning", '1', prefix + "cleaning", '1',
              Direction::Right);
-  tm.AddRule(prefix + "cleaning", 'm', prefix + "cleaning", '1',
+  tm.AddRule(prefix + "cleaning", '@', prefix + "cleaning", '1',
              Direction::Right);
   tm.AddRule(prefix + "cleaning", '#', prefix + "finish", '#', Direction::Stay);
 
@@ -404,7 +400,6 @@ void GenerateMultiply(TuringMachine &tm, const std::string &startState,
 
 // ====================================================================================
 // --- Макрос: Присваивание / Копирование (Dest = Src) ---
-// --- Архитектура: Очищаем целевую переменную, затем прибавляем к ней исходную.
 // ====================================================================================
 void GenerateAssign(TuringMachine &tm, const std::string &startState,
                     char destName, char srcName, const std::string &nextState) {
