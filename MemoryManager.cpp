@@ -27,9 +27,10 @@ char MemoryManager::GetAddress(const std::string &name) const {
 }
 
 void MemoryManager::Deploy(TuringMachine &tm) const {
-  // Начинаем с индекса 1. Нулевая ячейка ленты ОБЯЗАНА оставаться пустой
-  // ('_'), чтобы макрос GenerateReturnToStart корректно отбивался от левого
-  // края.
+  // КРИТИЧЕСКИЙ ФИКС: Ставим "стену" в самое начало ленты.
+  tm.SetTapeContent(0, '^');
+
+  // Начинаем с индекса 1.
   int head = 1;
 
   for (const auto &var : variables_) {
@@ -61,8 +62,6 @@ int MemoryManager::GetDecimalValue(const TuringMachine &tm,
   bool inVariableBlock = false;
   int value = 0;
 
-  // Так как std::map отсортирован по ключам (координатам ленты),
-  // мы читаем ленту последовательно слева направо.
   for (const auto &[pos, symbol] : tape) {
     // Нашли маркер нашей переменной
     if (symbol == address) {
