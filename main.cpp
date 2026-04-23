@@ -1,35 +1,43 @@
 #include "Compiler.h"
+#include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
 
 int main() {
   TuringMachine tm("start");
   MemoryManager mem;
   Compiler compiler(tm, mem);
 
-  // Псевдокод: Вычисление факториала числа 5
-  // 5! = 5 * 4 * 3 * 2 * 1 = 120
-  std::vector<std::string> sourceCode = {
-      "x = 5",    // Инициализируем число
-      "fact = 1", // База факториала
+  std::string filename = "program.txt";
+  std::ifstream file(filename);
 
-      "while ( x ) {",     // Пока x > 0
-      "  fact = fact * x", // Накапливаем факториал
-      "  x--",             // Уменьшаем x
-      "}"};
+  if (!file.is_open()) {
+    std::cerr << "[Ошибка] Не удалось открыть файл: " << filename << "\n";
+    return 1;
+  }
 
-  std::cout << "[Compiler] Translating FACTORIAL program...\n";
+  std::vector<std::string> sourceCode;
+  std::string line;
+  while (std::getline(file, line)) {
+    if (!line.empty()) {
+      sourceCode.push_back(line);
+    }
+  }
+  file.close();
+
+  std::cout << "[Compiler] Считывание кода завершено. Трансляция...\n";
   compiler.Compile(sourceCode);
   mem.Deploy(tm);
 
-  std::cout
-      << "[Processor] Executing on MT. Please wait, computing 5! is heavy...\n";
-  tm.Run();
+  std::cout << "[Processor] Выполнение программы:\n";
+  std::cout << "------------------------------------\n";
 
-  std::cout << "\n=== FINAL REGISTERS ===\n";
-  std::cout << "x = " << mem.GetDecimalValue(tm, "x") << "\n";
-  std::cout << "fact (Expected 120) = " << mem.GetDecimalValue(tm, "fact")
-            << "\n";
-  std::cout << "=======================\n";
+  // Запускаем исполнение через ОС компилятора, чтобы перехватывать print
+  compiler.Execute();
+
+  std::cout << "------------------------------------\n";
+  std::cout << "[Processor] Программа успешно завершена.\n";
 
   return 0;
 }

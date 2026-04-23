@@ -9,13 +9,20 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct BlockScope {
-  enum Type { WHILE, FOR } type;
+  enum Type { WHILE, FOR, IF, ELSE } type;
   std::string startState;
   std::string endState;
+  std::string nextBlockState;
   std::vector<std::string> stepTokens;
+};
+
+struct PrintHook {
+  std::string displayName;
+  std::string internalName;
 };
 
 class Compiler {
@@ -24,6 +31,7 @@ private:
   MemoryManager &mem_;
   int stateCounter_ = 0;
   std::vector<BlockScope> scopes_;
+  std::unordered_map<std::string, PrintHook> printHooks_;
 
   std::string NextState() {
     return "q_auto_" + std::to_string(++stateCounter_);
@@ -46,7 +54,8 @@ private:
         }
         tokens.push_back(line.substr(i, 2));
         ++i;
-      } else if (std::string("=+-*(){};").find(line[i]) != std::string::npos) {
+      } else if (std::string("=+-*(){};<>").find(line[i]) !=
+                 std::string::npos) {
         if (!token.empty()) {
           tokens.push_back(token);
           token.clear();
@@ -74,7 +83,14 @@ private:
   void CompileStatement(const std::vector<std::string> &tokens,
                         const std::string &currentState,
                         const std::string &nextState) {
-    if (tokens.size() == 2 && tokens[1] == "++") {
+    if (tokens[0] == "print" && tokens.size() == 2) {
+      std::string printState = NextState() + "_print";
+      std::string internalName =
+          IsNumber(tokens[1]) ? "_c" + tokens[1] : tokens[1];
+      printHooks_[printState] = {tokens[1], internalName};
+      tm_.AddRule(currentState, '^', printState, '^', Direction::Stay);
+      tm_.AddRule(printState, '^', nextState, '^', Direction::Stay);
+    } else if (tokens.size() == 2 && tokens[1] == "++") {
       GenerateIncrement(tm_, currentState, GetAddressFor(tokens[0]), nextState);
     } else if (tokens.size() == 2 && tokens[1] == "--") {
       GenerateDecrement(tm_, currentState, GetAddressFor(tokens[0]), nextState);
@@ -128,34 +144,67 @@ public:
   Compiler(TuringMachine &tm, MemoryManager &mem) : tm_(tm), mem_(mem) {}
 
   void Compile(const std::vector<std::string> &sourceCode) {
+    // Внутренний регистр ALU всегда должен быть самым большим (int)
     try {
-      mem_.Allocate("_temp", 0);
+      mem_.Allocate("_temp", 0, 10000);
     } catch (...) {
     }
     try {
-      mem_.Allocate("_c0", 0);
+      mem_.Allocate("_c0", 0, 0);
     } catch (...) {
-    }
+    } // Константы не растут, им не нужен буфер!
 
+    // ====================================================================
+    // ПАС 1: Строгая Система Типов (Strict Typing Allocation)
+    // ====================================================================
     for (const auto &line : sourceCode) {
-      for (const auto &t : Tokenize(line)) {
-        if (IsNumber(t)) {
+      auto tokens = Tokenize(line);
+      for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i] == "bool") {
+          if (i + 1 < tokens.size())
+            try {
+              mem_.Allocate(tokens[i + 1], 0, 1);
+            } catch (...) {
+            }
+        } else if (tokens[i] == "byte") {
+          if (i + 1 < tokens.size())
+            try {
+              mem_.Allocate(tokens[i + 1], 0, 255);
+            } catch (...) {
+            }
+        } else if (tokens[i] == "int") {
+          if (i + 1 < tokens.size())
+            try {
+              mem_.Allocate(tokens[i + 1], 0, 10000);
+            } catch (...) {
+            }
+        } else if (IsNumber(tokens[i])) {
+          // Выделяем скрытые константы с буфером 0
           try {
-            mem_.Allocate("_c" + t, std::stoi(t));
-          } catch (...) {
-          }
-        } else if (isalpha(t[0]) && t != "while" && t != "for") {
-          try {
-            mem_.Allocate(t, 0);
+            mem_.Allocate("_c" + tokens[i], std::stoi(tokens[i]), 0);
           } catch (...) {
           }
         }
       }
     }
 
+    // ====================================================================
+    // ПАС 2: Генерация AST
+    // ====================================================================
     std::string currentState = "start";
     for (const auto &line : sourceCode) {
       auto tokens = Tokenize(line);
+      if (tokens.empty())
+        continue;
+
+      // МАГИЯ: Стираем ключевые слова типов, чтобы код вида "int x = 5"
+      // превратился в "x = 5" и наш парсер разобрал его как раньше!
+      auto it = std::remove_if(
+          tokens.begin(), tokens.end(), [](const std::string &t) {
+            return t == "bool" || t == "byte" || t == "int";
+          });
+      tokens.erase(it, tokens.end());
+
       if (tokens.empty())
         continue;
 
@@ -166,16 +215,96 @@ public:
         tm_.AddRule(currentState, '^', cond, '^', Direction::Stay);
         GenerateCompare(tm_, cond, GetAddressFor(tokens[2]), GetAddressFor("0"),
                         body, end, end);
-        scopes_.push_back({BlockScope::WHILE, cond, end, {}});
+        scopes_.push_back({BlockScope::WHILE, cond, end, "", {}});
         currentState = body;
+      } else if (tokens[0] == "for") {
+        auto it1 = std::find(tokens.begin(), tokens.end(), ";");
+        auto it2 = std::find(it1 + 1, tokens.end(), ";");
+        auto it3 = std::find(it2 + 1, tokens.end(), ")");
+        if (it1 == tokens.end() || it2 == tokens.end() || it3 == tokens.end())
+          continue;
+
+        std::vector<std::string> initTokens(tokens.begin() + 2, it1);
+        std::vector<std::string> condTokens(it1 + 1, it2);
+        std::vector<std::string> stepTokens(it2 + 1, it3);
+
+        std::string afterInit = NextState() + "_for_init";
+        CompileStatement(initTokens, currentState, afterInit);
+        currentState = afterInit;
+
+        std::string cond = NextState() + "_for_cond";
+        std::string body = NextState() + "_for_body";
+        std::string end = NextState() + "_for_end";
+
+        tm_.AddRule(currentState, '^', cond, '^', Direction::Stay);
+
+        std::string leftArg = condTokens[0], op = condTokens[1],
+                    rightArg = condTokens[2];
+        if (op == "<")
+          GenerateCompare(tm_, cond, GetAddressFor(leftArg),
+                          GetAddressFor(rightArg), end, body, end);
+        else if (op == ">")
+          GenerateCompare(tm_, cond, GetAddressFor(leftArg),
+                          GetAddressFor(rightArg), body, end, end);
+
+        scopes_.push_back({BlockScope::FOR, cond, end, "", stepTokens});
+        currentState = body;
+      } else if (tokens[0] == "if") {
+        std::string cond = NextState() + "_if_c";
+        std::string body = NextState() + "_if_b";
+        std::string nextBlock = NextState() + "_if_next";
+        std::string endChain = NextState() + "_if_end";
+        tm_.AddRule(currentState, '^', cond, '^', Direction::Stay);
+        GenerateCompare(tm_, cond, GetAddressFor(tokens[2]), GetAddressFor("0"),
+                        body, nextBlock, nextBlock);
+        scopes_.push_back({BlockScope::IF, cond, endChain, nextBlock, {}});
+        currentState = body;
+      } else if (tokens[0] == "}" && tokens.size() > 1 && tokens[1] == "else") {
+        BlockScope scope = scopes_.back();
+        scopes_.pop_back();
+        tm_.AddRule(currentState, '^', scope.endState, '^', Direction::Stay);
+        if (tokens.size() > 2 && tokens[2] == "if") {
+          std::string body = NextState() + "_elif_b";
+          std::string nextBlock = NextState() + "_elif_next";
+          GenerateCompare(tm_, scope.nextBlockState, GetAddressFor(tokens[4]),
+                          GetAddressFor("0"), body, nextBlock, nextBlock);
+          scopes_.push_back({BlockScope::IF,
+                             scope.nextBlockState,
+                             scope.endState,
+                             nextBlock,
+                             {}});
+          currentState = body;
+        } else {
+          scopes_.push_back(
+              {BlockScope::ELSE, scope.nextBlockState, scope.endState, "", {}});
+          currentState = scope.nextBlockState;
+        }
       } else if (tokens[0] == "}") {
         if (scopes_.empty())
           continue;
         BlockScope scope = scopes_.back();
         scopes_.pop_back();
-        tm_.AddRule(currentState, '^', scope.startState, '^', Direction::Stay);
-        currentState =
-            scope.endState; // Дальнейшие команды пойдут из точки выхода
+
+        if (scope.type == BlockScope::WHILE) {
+          tm_.AddRule(currentState, '^', scope.startState, '^',
+                      Direction::Stay);
+          currentState = scope.endState;
+        } else if (scope.type == BlockScope::FOR) {
+          std::string stepState = NextState() + "_for_step";
+          CompileStatement(scope.stepTokens, currentState, stepState);
+          currentState = stepState;
+          tm_.AddRule(currentState, '^', scope.startState, '^',
+                      Direction::Stay);
+          currentState = scope.endState;
+        } else if (scope.type == BlockScope::IF ||
+                   scope.type == BlockScope::ELSE) {
+          tm_.AddRule(currentState, '^', scope.endState, '^', Direction::Stay);
+          if (scope.type == BlockScope::IF) {
+            tm_.AddRule(scope.nextBlockState, '^', scope.endState, '^',
+                        Direction::Stay);
+          }
+          currentState = scope.endState;
+        }
       } else {
         std::string next = NextState();
         CompileStatement(tokens, currentState, next);
@@ -184,5 +313,23 @@ public:
     }
     tm_.AddRule(currentState, '^', "halt", '^', Direction::Stay);
   }
+
+  void Execute() {
+    while (tm_.GetCurrentState() != "halt") {
+      std::string curr = tm_.GetCurrentState();
+
+      if (printHooks_.count(curr)) {
+        auto hook = printHooks_[curr];
+        std::cout << ">> " << hook.displayName << " = "
+                  << mem_.GetDecimalValue(tm_, hook.internalName) << "\n";
+      }
+
+      if (!tm_.Step()) {
+        std::cerr << "[Hardware Fault] Неожиданная остановка процессора.\n";
+        break;
+      }
+    }
+  }
 };
-#endif
+
+#endif // COMPILER_H

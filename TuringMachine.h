@@ -77,6 +77,8 @@ public:
 
     return true;
   }
+  // Отдает текущее состояние машины (для системных прерываний)
+  std::string GetCurrentState() const { return currentState; }
 
   // Запуск машины до остановки
   void Run() {
