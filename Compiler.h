@@ -11,13 +11,11 @@
 #include <string>
 #include <vector>
 
-// Структура для отслеживания вложенности циклов
 struct BlockScope {
   enum Type { WHILE, FOR } type;
-  std::string startState; // Куда возвращаться (начало цикла)
-  std::string endState;   // Куда прыгать при выходе (конец цикла)
-  std::vector<std::string>
-      stepTokens; // Инструкция шага для цикла for (например, x--)
+  std::string startState;
+  std::string endState;
+  std::vector<std::string> stepTokens;
 };
 
 class Compiler {
@@ -25,17 +23,15 @@ private:
   TuringMachine &tm_;
   MemoryManager &mem_;
   int stateCounter_ = 0;
-  std::vector<BlockScope> scopes_; // Стек областей видимости
+  std::vector<BlockScope> scopes_;
 
   std::string NextState() {
     return "q_auto_" + std::to_string(++stateCounter_);
   }
 
-  // Продвинутый лексер с поддержкой скобок и точек с запятой
   std::vector<std::string> Tokenize(const std::string &line) {
     std::vector<std::string> tokens;
     std::string token;
-
     for (size_t i = 0; i < line.length(); ++i) {
       if (std::isspace(line[i])) {
         if (!token.empty()) {
@@ -50,8 +46,7 @@ private:
         }
         tokens.push_back(line.substr(i, 2));
         ++i;
-      } else if (std::string("=+-*(){};<>").find(line[i]) !=
-                 std::string::npos) {
+      } else if (std::string("=+-*(){};").find(line[i]) != std::string::npos) {
         if (!token.empty()) {
           tokens.push_back(token);
           token.clear();
@@ -76,7 +71,6 @@ private:
     return mem_.GetAddress(token);
   }
 
-  // Генератор инструкций (AST-узел для одной строки)
   void CompileStatement(const std::vector<std::string> &tokens,
                         const std::string &currentState,
                         const std::string &nextState) {
@@ -89,14 +83,11 @@ private:
         GenerateAssign(tm_, currentState, GetAddressFor(tokens[0]),
                        GetAddressFor(tokens[2]), nextState);
       } else {
-        tm_.AddRule(currentState, '^', nextState, '^',
-                    Direction::Stay); // Фиктивный JUMP (x = x)
+        tm_.AddRule(currentState, '^', nextState, '^', Direction::Stay);
       }
     } else if (tokens.size() == 5 && tokens[1] == "=") {
       std::string dest = tokens[0], arg1 = tokens[2], op = tokens[3],
                   arg2 = tokens[4];
-      std::string midState = currentState + "_mid";
-
       if (op == "+") {
         if (dest == arg1)
           GenerateAdd(tm_, currentState, GetAddressFor(dest),
@@ -105,9 +96,10 @@ private:
           GenerateAdd(tm_, currentState, GetAddressFor(dest),
                       GetAddressFor(arg1), nextState);
         else {
+          std::string mid = currentState + "_m";
           GenerateAssign(tm_, currentState, GetAddressFor(dest),
-                         GetAddressFor(arg1), midState);
-          GenerateAdd(tm_, midState, GetAddressFor(dest), GetAddressFor(arg2),
+                         GetAddressFor(arg1), mid);
+          GenerateAdd(tm_, mid, GetAddressFor(dest), GetAddressFor(arg2),
                       nextState);
         }
       } else if (op == "-") {
@@ -115,28 +107,20 @@ private:
           GenerateSubtract(tm_, currentState, GetAddressFor(dest),
                            GetAddressFor(arg2), nextState);
         else {
+          std::string mid = currentState + "_m";
           GenerateAssign(tm_, currentState, GetAddressFor(dest),
-                         GetAddressFor(arg1), midState);
-          GenerateSubtract(tm_, midState, GetAddressFor(dest),
-                           GetAddressFor(arg2), nextState);
+                         GetAddressFor(arg1), mid);
+          GenerateSubtract(tm_, mid, GetAddressFor(dest), GetAddressFor(arg2),
+                           nextState);
         }
       } else if (op == "*") {
-        if (dest == arg1 ||
-            dest == arg2) { // Само-умножение через временный регистр
-          std::string t1 = currentState + "_t1", t2 = currentState + "_t2";
-          GenerateClear(tm_, currentState, mem_.GetAddress("_temp"), t1);
-          GenerateMultiply(tm_, t1, mem_.GetAddress("_temp"),
-                           GetAddressFor(arg1), GetAddressFor(arg2), t2);
-          GenerateAssign(tm_, t2, GetAddressFor(dest), mem_.GetAddress("_temp"),
-                         nextState);
-        } else {
-          GenerateClear(tm_, currentState, GetAddressFor(dest), midState);
-          GenerateMultiply(tm_, midState, GetAddressFor(dest),
-                           GetAddressFor(arg1), GetAddressFor(arg2), nextState);
-        }
+        std::string t1 = currentState + "_t1", t2 = currentState + "_t2";
+        GenerateClear(tm_, currentState, mem_.GetAddress("_temp"), t1);
+        GenerateMultiply(tm_, t1, mem_.GetAddress("_temp"), GetAddressFor(arg1),
+                         GetAddressFor(arg2), t2);
+        GenerateAssign(tm_, t2, GetAddressFor(dest), mem_.GetAddress("_temp"),
+                       nextState);
       }
-    } else {
-      std::cerr << "[Compiler Error] Неизвестная инструкция.\n";
     }
   }
 
@@ -153,7 +137,6 @@ public:
     } catch (...) {
     }
 
-    // ПАС 1: Выделение памяти (без изменений)
     for (const auto &line : sourceCode) {
       for (const auto &t : Tokenize(line)) {
         if (IsNumber(t)) {
@@ -170,55 +153,36 @@ public:
       }
     }
 
-    // ПАС 2: Генерация потока управления
     std::string currentState = "start";
-
     for (const auto &line : sourceCode) {
       auto tokens = Tokenize(line);
       if (tokens.empty())
         continue;
 
       if (tokens[0] == "while") {
-        std::string condState = NextState() + "_cond";
-        std::string bodyState = NextState() + "_body";
-        std::string endState = NextState() + "_end";
-
-        // JUMP в начало проверки
-        tm_.AddRule(currentState, '^', condState, '^', Direction::Stay);
-        // Сравниваем: если > 0 -> в тело, иначе -> выход
-        GenerateCompare(tm_, condState, GetAddressFor(tokens[2]),
-                        GetAddressFor("0"), bodyState, endState, endState);
-
-        scopes_.push_back({BlockScope::WHILE, condState, endState, {}});
-        currentState = bodyState; // Тело начинается здесь
+        std::string cond = NextState() + "_c";
+        std::string body = NextState() + "_b";
+        std::string end = NextState() + "_e";
+        tm_.AddRule(currentState, '^', cond, '^', Direction::Stay);
+        GenerateCompare(tm_, cond, GetAddressFor(tokens[2]), GetAddressFor("0"),
+                        body, end, end);
+        scopes_.push_back({BlockScope::WHILE, cond, end, {}});
+        currentState = body;
       } else if (tokens[0] == "}") {
         if (scopes_.empty())
           continue;
         BlockScope scope = scopes_.back();
         scopes_.pop_back();
-
-        if (scope.type == BlockScope::FOR) {
-          std::string stepState = NextState() + "_step";
-          CompileStatement(scope.stepTokens, currentState, stepState);
-          currentState = stepState;
-        }
-
-        // КРИТИЧЕСКИЙ МОМЕНТ: Замыкаем тело цикла на проверку условия
         tm_.AddRule(currentState, '^', scope.startState, '^', Direction::Stay);
-
-        // Будущие инструкции пойдут из состояния выхода из цикла
-        currentState = scope.endState;
+        currentState =
+            scope.endState; // Дальнейшие команды пойдут из точки выхода
       } else {
-        // Обычная инструкция: x++, fact = fact * x и т.д.
-        std::string nextState = NextState();
-        CompileStatement(tokens, currentState, nextState);
-        currentState = nextState; // Теперь цепочка не рвется!
+        std::string next = NextState();
+        CompileStatement(tokens, currentState, next);
+        currentState = next;
       }
     }
-
-    // Финальный переход в halt
     tm_.AddRule(currentState, '^', "halt", '^', Direction::Stay);
   }
 };
-
-#endif // COMPILER_H
+#endif
