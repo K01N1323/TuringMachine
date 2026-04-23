@@ -151,9 +151,9 @@ public:
     try {
       mem_.Allocate("_c0", 0);
     } catch (...) {
-    } // Обязательно выделяем константу 0 для условий
+    }
 
-    // ПАС 1: Выделение памяти
+    // ПАС 1: Выделение памяти (без изменений)
     for (const auto &line : sourceCode) {
       for (const auto &t : Tokenize(line)) {
         if (IsNumber(t)) {
@@ -170,7 +170,7 @@ public:
       }
     }
 
-    // ПАС 2: Генерация потока управления (Control Flow)
+    // ПАС 2: Генерация потока управления
     std::string currentState = "start";
 
     for (const auto &line : sourceCode) {
@@ -179,67 +179,44 @@ public:
         continue;
 
       if (tokens[0] == "while") {
-        std::string condState = NextState();
-        std::string bodyState = NextState();
-        std::string endState = NextState();
+        std::string condState = NextState() + "_cond";
+        std::string bodyState = NextState() + "_body";
+        std::string endState = NextState() + "_end";
 
-        // Безусловный JUMP в начало проверки
+        // JUMP в начало проверки
         tm_.AddRule(currentState, '^', condState, '^', Direction::Stay);
-
-        // while ( x ) -> сравниваем x с константой 0. Если x > 0, идем в
-        // bodyState
+        // Сравниваем: если > 0 -> в тело, иначе -> выход
         GenerateCompare(tm_, condState, GetAddressFor(tokens[2]),
                         GetAddressFor("0"), bodyState, endState, endState);
 
         scopes_.push_back({BlockScope::WHILE, condState, endState, {}});
-        currentState = bodyState;
-      } else if (tokens[0] == "for") {
-        // Парсим for ( i = 0 ; i > 0 ; i -- ) {
-        auto it1 = std::find(tokens.begin(), tokens.end(), ";");
-        auto it2 = std::find(it1 + 1, tokens.end(), ";");
-        auto it3 = std::find(it2 + 1, tokens.end(), ")");
-
-        std::vector<std::string> initTokens(tokens.begin() + 2, it1);
-        std::vector<std::string> condTokens(it1 + 1, it2);
-        std::vector<std::string> stepTokens(it2 + 1, it3);
-
-        std::string afterInitState = NextState();
-        CompileStatement(initTokens, currentState, afterInitState);
-
-        std::string condState = afterInitState;
-        std::string bodyState = NextState();
-        std::string endState = NextState();
-
-        // Сравниваем condTokens[0] с 0
-        GenerateCompare(tm_, condState, GetAddressFor(condTokens[0]),
-                        GetAddressFor("0"), bodyState, endState, endState);
-
-        scopes_.push_back({BlockScope::FOR, condState, endState, stepTokens});
-        currentState = bodyState;
+        currentState = bodyState; // Тело начинается здесь
       } else if (tokens[0] == "}") {
+        if (scopes_.empty())
+          continue;
         BlockScope scope = scopes_.back();
         scopes_.pop_back();
 
         if (scope.type == BlockScope::FOR) {
-          std::string stepEndState = NextState();
-          CompileStatement(scope.stepTokens, currentState, stepEndState);
-          currentState = stepEndState;
+          std::string stepState = NextState() + "_step";
+          CompileStatement(scope.stepTokens, currentState, stepState);
+          currentState = stepState;
         }
 
-        // Замыкаем цикл JUMP-ом в начало проверки
+        // КРИТИЧЕСКИЙ МОМЕНТ: Замыкаем тело цикла на проверку условия
         tm_.AddRule(currentState, '^', scope.startState, '^', Direction::Stay);
 
-        // Дальнейший код будет строиться от endState этого цикла
+        // Будущие инструкции пойдут из состояния выхода из цикла
         currentState = scope.endState;
       } else {
-        // Обычная инструкция
+        // Обычная инструкция: x++, fact = fact * x и т.д.
         std::string nextState = NextState();
         CompileStatement(tokens, currentState, nextState);
-        currentState = nextState;
+        currentState = nextState; // Теперь цепочка не рвется!
       }
     }
 
-    // Линковка финального состояния
+    // Финальный переход в halt
     tm_.AddRule(currentState, '^', "halt", '^', Direction::Stay);
   }
 };
