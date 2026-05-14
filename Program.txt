@@ -1,7 +1,3 @@
-int loc = 125
-int rezult = 0
-
-for ( byte i = 0 ; i < 12 ; i++ ) {
-  rezult = rezult + loc
-  print rezult
-}
+var x = 10
+var y = 20
+var z = y - x

@@ -1,100 +1,50 @@
 #ifndef TURING_MACHINE_H
 #define TURING_MACHINE_H
-#include <iostream>
-#include <map>
+
 #include <string>
+#include <vector>
+#include <unordered_map>
+#include <map>
+#include <array>
 
 enum class Direction { Left = -1, Stay = 0, Right = 1 };
 
-// Структура, описывающая реакцию машины (что делать дальше)
-struct Action {
-  std::string nextState;
-  char writeSymbol;
-  Direction move;
+struct Rule {
+    std::array<char, 3> readSymbols;
+    std::string nextState;
+    std::array<char, 3> writeSymbols;
+    std::array<Direction, 3> moveDirections;
 };
 
 class TuringMachine {
 private:
-  // временная лента. Потом тип LazySequence<char>
-  std::map<int, char> tape;
+    std::array<std::map<int, char>, 3> tapes;
+    std::array<int, 3> heads;
+    std::string currentState;
+    
+    // Key: Current state. Value: List of rules for this state.
+    // O(1) lookup of state, then iterating small vector of rules.
+    std::unordered_map<std::string, std::vector<Rule>> rules;
 
-  int head;                 // Текущая позиция каретки
-  std::string currentState; // Текущее состояние машины
-
-  // Ключ: пара <Текущее состояние, Читаемый символ>
-  std::map<std::pair<std::string, char>, Action> rules;
-
-  // Чтение символа с ленты (если ячейка пуста, возвращаем пробел/пустышку '_')
-  char ReadTape() {
-    if (tape.find(head) == tape.end()) {
-      return '_';
-    }
-    return tape[head];
-  }
+    char ReadTape(int tapeIndex);
 
 public:
-  // Конструктор
-  TuringMachine(const std::string &startState = "q0") {
-    head = 0;
-    currentState = startState;
-  }
+    TuringMachine(const std::string& startState = "start");
 
-  // Метод для добавления правила (его потом будет массово вызывать наш
-  // компилятор)
-  void AddRule(const std::string &state, char readSym,
-               const std::string &nextState, char writeSym, Direction dir) {
-    rules[{state, readSym}] = {nextState, writeSym, dir};
-  }
+    void AddRule(const std::string& state, 
+                 char r1, char r2, char r3,
+                 const std::string& nextState, 
+                 char w1, char w2, char w3, 
+                 Direction d1, Direction d2, Direction d3);
 
-  // Записать начальные данные на ленту
-  void SetTapeContent(int position, char symbol) { tape[position] = symbol; }
-
-  // Предоставляет доступ к памяти только для чтения (для MemoryManager)
-  const std::map<int, char> &GetTape() const { return tape; }
-
-  // Один такт работы машины
-  bool Step() {
-    if (currentState == "halt") {
-      return false;
-    }
-
-    char currentSymbol = ReadTape();
-    auto key = std::make_pair(currentState, currentSymbol);
-
-    auto it = rules.find(key);
-    if (it == rules.end()) {
-      // НЕЯВНАЯ ПРОВЕРКА: Спасает от зависания, если компилятор забыл дописать
-      // правила
-      std::cerr << "Ошибка исполнения МТ: Нет правила для состояния '"
-                << currentState << "' и символа '" << currentSymbol << "'\n";
-      return false;
-    }
-
-    Action action = it->second;
-    tape[head] = action.writeSymbol;
-    head += static_cast<int>(action.move);
-    currentState = action.nextState;
-
-    return true;
-  }
-  // Отдает текущее состояние машины (для системных прерываний)
-  std::string GetCurrentState() const { return currentState; }
-
-  // Запуск машины до остановки
-  void Run() {
-    while (Step()) {
-      // Цикл крутится, пока Step() возвращает true
-    }
-  }
-
-  // Временный метод для вывода ленты (пока нет графики)
-  void PrintTape() {
-    std::cout << "Состояние: " << currentState << " | Каретка на: " << head
-              << "\nЛента: ";
-    for (auto const &[pos, symbol] : tape) {
-      std::cout << "[" << pos << "]=" << symbol << " ";
-    }
-    std::cout << "\n\n";
-  }
+    void SetTapeContent(int tapeIndex, int position, char symbol);
+    
+    const std::map<int, char>& GetTape(int tapeIndex) const;
+    int GetHeadPosition(int tapeIndex) const;
+    
+    bool Step();
+    std::string GetCurrentState() const;
+    void Run();
 };
+
 #endif // TURING_MACHINE_H

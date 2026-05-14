@@ -1,22 +1,44 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -Iimgui -Iimgui/backends -I/Users/nikolaj/TuringMachineMainRepo/vendor/GLFW/glfw-3.4.bin.MACOS/include
 
-SRCS = main.cpp MemoryManager.cpp
-OBJS = $(SRCS:.cpp=.o)
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
+ifeq ($(UNAME_S), Darwin)
+	GLFW_PATH = /Users/nikolaj/TuringMachineMainRepo/vendor/GLFW/glfw-3.4.bin.MACOS
+	ifeq ($(UNAME_M), arm64)
+		LIBS = -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo $(GLFW_PATH)/lib-arm64/libglfw3.a
+	else
+		LIBS = -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo $(GLFW_PATH)/lib-x86_64/libglfw3.a
+	endif
+else
+	LIBS = -lGL -lglfw
+endif
+
+IMGUI_SRCS = imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp imgui/backends/imgui_impl_glfw.cpp imgui/backends/imgui_impl_opengl3.cpp
+IMGUI_OBJS = $(IMGUI_SRCS:.cpp=.o)
+
+CORE_SRCS = main.cpp MemoryManager.cpp TuringMachine.cpp Compiler.cpp MacrosForTuring.cpp
+CORE_OBJS = $(CORE_SRCS:.cpp=.o)
+
+GUI_SRCS = GUI.cpp
+GUI_OBJS = $(GUI_SRCS:.cpp=.o)
+
 TARGET = turing_machine
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS)
+$(TARGET): $(CORE_OBJS) $(GUI_OBJS) $(IMGUI_OBJS)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(CORE_OBJS) $(GUI_OBJS) $(IMGUI_OBJS) $(LIBS)
+
+headless: CXXFLAGS += -DHEADLESS
+headless: $(CORE_OBJS)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(CORE_OBJS)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-main.o: main.cpp MacrosForTuring.h TuringMachine.h MemoryManager.h Compiler.h
-MemoryManager.o: MemoryManager.cpp MemoryManager.h TuringMachine.h
-
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(CORE_OBJS) $(GUI_OBJS) $(IMGUI_OBJS) $(TARGET)
 
-.PHONY: all clean
+.PHONY: all headless clean

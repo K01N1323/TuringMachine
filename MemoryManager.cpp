@@ -1,85 +1,74 @@
 #include "MemoryManager.h"
 #include <stdexcept>
+#include <iostream>
 
-void MemoryManager::Allocate(const std::string &name, int initialValue,
-                             size_t padding) {
-  if (symbolTable_.count(name)) {
-    throw std::runtime_error("MemoryManager Error: Redefinition of variable '" +
-                             name + "'");
-  }
-  if (nextAddress_ > 'z') {
-    throw std::runtime_error(
-        "MemoryManager Error: Out of address space ('a'-'z' exhausted)");
-  }
-
-  char address = nextAddress_++;
-  symbolTable_[name] = address;
-  variables_.push_back({name, address, initialValue, padding});
+void MemoryManager::Allocate(const std::string& name, int initialValue) {
+    if (symbolTable.find(name) != symbolTable.end()) return;
+    int index = variables.size();
+    variables.push_back({name, index, initialValue});
+    symbolTable[name] = index;
 }
 
-char MemoryManager::GetAddress(const std::string &name) const {
-  auto it = symbolTable_.find(name);
-  if (it == symbolTable_.end()) {
-    throw std::runtime_error("MemoryManager Error: Undefined variable '" +
-                             name + "'");
-  }
-  return it->second;
+int MemoryManager::GetVarIndex(const std::string& name) const {
+    auto it = symbolTable.find(name);
+    if (it != symbolTable.end()) {
+        return it->second;
+    }
+    throw std::runtime_error("Variable not found: " + name);
 }
 
-void MemoryManager::Deploy(TuringMachine &tm) const {
-  // КРИТИЧЕСКИЙ ФИКС: Ставим "стену" в самое начало ленты.
-  tm.SetTapeContent(0, '^');
+void MemoryManager::Deploy(TuringMachine& tm) const {
+    tm.SetTapeContent(0, -1, '!');
+    tm.SetTapeContent(1, -1, '!');
+    tm.SetTapeContent(2, -1, '!');
+    for (const auto& var : variables) {
+        int basePos = var.varIndex * VAR_SIZE;
+        tm.SetTapeContent(0, basePos, '#'); // Delimiter
+        
+        int val = var.initialValue;
+        if (val < 0) {
+            tm.SetTapeContent(0, basePos + 1, '-');
+            val = -val;
+        } else {
+            tm.SetTapeContent(0, basePos + 1, '+');
+        }
 
-  // Начинаем с индекса 1.
-  int head = 1;
-
-  for (const auto &var : variables_) {
-    // Пишем заголовок переменной (например, #a:)
-    tm.SetTapeContent(head++, '#');
-    tm.SetTapeContent(head++, var.address);
-    tm.SetTapeContent(head++, ':');
-
-    // Пишем унарное значение
-    for (int i = 0; i < var.initialValue; ++i) {
-      tm.SetTapeContent(head++, '1');
+        // 32-bit binary digits (MSB at basePos+2, LSB at basePos+33)
+        // Note: the example provided in prompt has MSB first
+        for (int i = 0; i < 32; ++i) {
+            int bit = (val >> (31 - i)) & 1;
+            tm.SetTapeContent(0, basePos + 2 + i, bit ? '1' : '0');
+        }
     }
-
-    // Закрываем переменную
-    tm.SetTapeContent(head++, '#');
-
-    // Формируем защитный интервал (Padding) для избежания buffer overflow
-    for (size_t i = 0; i < var.padding; ++i) {
-      tm.SetTapeContent(head++, '_');
+    // Final delimiter so that search macros know where memory ends (optional but safe)
+    if (!variables.empty()) {
+        tm.SetTapeContent(0, variables.size() * VAR_SIZE, '#');
     }
-  }
 }
 
-int MemoryManager::GetDecimalValue(const TuringMachine &tm,
-                                   const std::string &name) const {
-  char address = GetAddress(name);
-  const auto &tape = tm.GetTape();
+int MemoryManager::GetDecimalValue(const TuringMachine& tm, const std::string& name) const {
+    int index = GetVarIndex(name);
+    int basePos = index * VAR_SIZE;
+    
+    const auto& tape = tm.GetTape(0);
+    
+    auto getTapeChar = [&](int pos) {
+        auto it = tape.find(pos);
+        return it != tape.end() ? it->second : '_';
+    };
 
-  bool inVariableBlock = false;
-  int value = 0;
-
-  for (const auto &[pos, symbol] : tape) {
-    // Нашли маркер нашей переменной
-    if (symbol == address) {
-      inVariableBlock = true;
-      continue;
+    char sign = getTapeChar(basePos + 1);
+    
+    int val = 0;
+    for (int i = 0; i < 32; ++i) {
+        char bit = getTapeChar(basePos + 2 + i);
+        if (bit == '1') {
+            val |= (1 << (31 - i));
+        }
     }
 
-    // Если мы внутри переменной
-    if (inVariableBlock) {
-      if (symbol == ':')
-        continue;
-      if (symbol == '1') {
-        value++; // Считаем унарные единицы
-      }
-      if (symbol == '#') {
-        break; // Конец блока переменной
-      }
+    if (sign == '-') {
+        val = -val;
     }
-  }
-  return value;
+    return val;
 }

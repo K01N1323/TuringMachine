@@ -2,41 +2,41 @@
 #define MEMORY_MANAGER_H
 
 #include "TuringMachine.h"
-#include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <vector>
+#include <unordered_map>
 
-// Описание блока памяти на ленте
 struct Variable {
-  std::string name; // Имя в высокоуровневом коде (например, "counter")
-  char address; // Односимвольный физический адрес на ленте ('a', 'b', 'c'...)
-  int initialValue;       // Стартовое значение (количество единиц)
-  size_t padding = 10000; // Зарезервированное пустое пространство (отступ)
+    std::string name;
+    int varIndex;     // Logical index (0, 1, 2...)
+    int initialValue;
 };
 
 class MemoryManager {
 private:
-  std::vector<Variable> variables_;
-  std::unordered_map<std::string, char> symbolTable_;
-  char nextAddress_ = 'a'; // Доступное адресное пространство: 'a' - 'z'
-
-  // Стандартный запас прочности для роста переменных
-  static constexpr size_t DEFAULT_PADDING = 15;
+    std::vector<Variable> variables;
+    std::unordered_map<std::string, int> symbolTable;
+    
+    // Each variable takes 34 cells: 
+    // Cell 0: '#'
+    // Cell 1: '+' or '-'
+    // Cell 2-33: 32 binary digits (MSB at 2, LSB at 33)
+    static constexpr int VAR_SIZE = 34;
 
 public:
-  // Регистрация переменной в памяти
-  void Allocate(const std::string &name, int initialValue = 0,
-                size_t padding = DEFAULT_PADDING);
-
-  // Разрешение имени (получение физического адреса для макросов)
-  char GetAddress(const std::string &name) const;
-
-  // Физическая "прошивка" памяти на ленту МТ
-  void Deploy(TuringMachine &tm) const;
-
-  // Декодирование унарного значения с ленты МТ в C++ int
-  int GetDecimalValue(const TuringMachine &tm, const std::string &name) const;
+    void Allocate(const std::string& name, int initialValue = 0);
+    void Clear() { variables.clear(); symbolTable.clear(); }
+    std::vector<std::string> GetVariableNames() const {
+        std::vector<std::string> names;
+        for (const auto& var : variables) names.push_back(var.name);
+        return names;
+    }
+    int GetVarIndex(const std::string& name) const;
+    void Deploy(TuringMachine& tm) const;
+    int GetDecimalValue(const TuringMachine& tm, const std::string& name) const;
+    
+    // Return physical tape start position for a variable
+    int GetAddress(const std::string& name) const { return GetVarIndex(name) * VAR_SIZE; }
 };
 
 #endif // MEMORY_MANAGER_H
