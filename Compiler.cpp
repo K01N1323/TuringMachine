@@ -179,10 +179,14 @@ void Compiler::Compile(const std::vector<std::string>& sourceCode) {
         if (tokens.size() >= 2 && tokens[0] == "var") {
             std::string varName = tokens[1];
             int initVal = 0;
-            // Если есть var x = 10, сразу запоминаем начальное значение
             if (tokens.size() >= 4 && tokens[2] == "=") {
                 bool isNum = true;
                 std::string valStr = tokens[3];
+
+                if (valStr == "-" && tokens.size() >= 5) {
+                    valStr += tokens[4];
+                }
+
                 for(size_t i=0; i<valStr.size(); ++i) {
                     if (i==0 && valStr[i] == '-' && valStr.size() > 1) continue;
                     if (!std::isdigit(valStr[i])) { isNum = false; break; }
@@ -203,7 +207,9 @@ void Compiler::Compile(const std::vector<std::string>& sourceCode) {
             std::vector<std::string> exprTokens(tokens.begin() + 3, tokens.end());
             if (!exprTokens.empty() && exprTokens.back() == ";") exprTokens.pop_back();
             
-            if (exprTokens.size() > 1) {
+            bool isJustNegativeNumber = (exprTokens.size() == 2 && exprTokens[0] == "-" && std::isdigit(exprTokens[1][0]));
+
+            if (exprTokens.size() > 1 && !isJustNegativeNumber) {
                 ASTNode* ast = BuildAST(exprTokens);
                 if (ast) {
                     std::string resultVar = CompileAST(ast, currentState);
